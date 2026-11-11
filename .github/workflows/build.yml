@@ -1,0 +1,66 @@
+name: Build PWA and Windows installer
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract source into build workspace
+        if: hashFiles('Gestao-de-Orcamentos-Fonte.zip') != ''
+        env:
+          SOURCE_SHA256: 22762c26a0f53fdf05328fc57fc45900ff173ca1dead9126ea4943fa8b0ecfac
+        run: |
+          python3 - <<'PYCODE'
+          import pathlib,zipfile,hashlib,os
+          p=pathlib.Path('Gestao-de-Orcamentos-Fonte.zip')
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==os.environ['SOURCE_SHA256']
+          with zipfile.ZipFile(p) as z:
+              for f in z.infolist():
+                  path=pathlib.PurePosixPath(f.filename)
+                  assert not path.is_absolute() and '..' not in path.parts
+              z.extractall('app')
+          PYCODE
+      - uses: actions/setup-node@v4
+        if: hashFiles('app/package.json') != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-go@v5
+        if: hashFiles('app/installer/go.mod') != ''
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Compile Windows installer
+        if: hashFiles('app/installer/go.mod') != ''
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go -C app/installer build -trimpath -ldflags='-H windowsgui -s -w' -o ../../Gestao-de-Orcamentos-Instalar-Windows-x64.exe .
+          cp app/installer/LEIA-ME.txt .
+          zip Gestao-de-Orcamentos-Windows.zip Gestao-de-Orcamentos-Instalar-Windows-x64.exe LEIA-ME.txt
+          sha256sum Gestao-de-Orcamentos-Instalar-Windows-x64.exe > SHA256SUMS.txt
+      - name: Validate and build offline PWA
+        if: hashFiles('app/package.json') != ''
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+          npm run build
+          cd dist
+          zip -r ../../gestao-orcamentos-pwa.zip .
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/package.json') != ''
+        with:
+          name: gestao-orcamentos-pwa-e-windows
+          path: |
+            gestao-orcamentos-pwa.zip
+            Gestao-de-Orcamentos-Windows.zip
+            Gestao-de-Orcamentos-Instalar-Windows-x64.exe
+            SHA256SUMS.txt
