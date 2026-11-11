@@ -13,7 +13,7 @@ jobs:
       - name: Extract source into build workspace
         if: hashFiles('Gestao-de-Orcamentos-Fonte.zip') != ''
         env:
-          SOURCE_SHA256: 22762c26a0f53fdf05328fc57fc45900ff173ca1dead9126ea4943fa8b0ecfac
+          SOURCE_SHA256: 85422ec3f762f53a332d471d33071fd8716a3ad9ce8a861ad49728d3104632e7
         run: |
           python3 - <<'PYCODE'
           import pathlib,zipfile,hashlib,os
@@ -36,7 +36,20 @@ jobs:
         with:
           go-version: '1.27.4'
           cache: false
-      - name: Compile Windows installer
+      - name: Validate and build embedded PWA
+        if: hashFiles('app/package.json') != ''
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+          npm run build
+          rm -rf installer/web
+          mkdir -p installer/web
+          cp -R dist/. installer/web/
+          go -C installer test ./...
+          cd dist
+          zip -r ../../gestao-orcamentos-pwa.zip .
+      - name: Compile offline Windows installer
         if: hashFiles('app/installer/go.mod') != ''
         env:
           GOOS: windows
@@ -46,15 +59,6 @@ jobs:
           cp app/installer/LEIA-ME.txt .
           zip Gestao-de-Orcamentos-Windows.zip Gestao-de-Orcamentos-Instalar-Windows-x64.exe LEIA-ME.txt
           sha256sum Gestao-de-Orcamentos-Instalar-Windows-x64.exe > SHA256SUMS.txt
-      - name: Validate and build offline PWA
-        if: hashFiles('app/package.json') != ''
-        working-directory: app
-        run: |
-          npm ci
-          npm test
-          npm run build
-          cd dist
-          zip -r ../../gestao-orcamentos-pwa.zip .
       - uses: actions/upload-artifact@v4
         if: hashFiles('app/package.json') != ''
         with:
