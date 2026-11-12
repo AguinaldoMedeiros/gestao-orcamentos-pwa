@@ -1,4 +1,4 @@
-name: Build PWA and Windows installer
+name: Build complete Windows application
 on:
   push:
     branches: [main]
@@ -6,65 +6,53 @@ on:
 permissions:
   contents: read
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
     steps:
       - uses: actions/checkout@v4
-      - name: Extract source into build workspace
-        if: hashFiles('Gestao-de-Orcamentos-Fonte.zip') != ''
-        env:
-          SOURCE_SHA256: 85422ec3f762f53a332d471d33071fd8716a3ad9ce8a861ad49728d3104632e7
+      - name: Extract verified application source
+        working-directory: .
+        shell: pwsh
         run: |
-          python3 - <<'PYCODE'
-          import pathlib,zipfile,hashlib,os
-          p=pathlib.Path('Gestao-de-Orcamentos-Fonte.zip')
-          assert hashlib.sha256(p.read_bytes()).hexdigest()==os.environ['SOURCE_SHA256']
-          with zipfile.ZipFile(p) as z:
-              for f in z.infolist():
-                  path=pathlib.PurePosixPath(f.filename)
-                  assert not path.is_absolute() and '..' not in path.parts
-              z.extractall('app')
-          PYCODE
+          if ((Get-FileHash Gestao-de-Orcamentos-Fonte.zip -Algorithm SHA256).Hash -ne '33131e6e2d9a5dfb598488b1bc81ed9ca4cc6d81aaf67b42c3e37b0a2edb6978') { throw 'Source checksum mismatch' }
+          Expand-Archive -Path Gestao-de-Orcamentos-Fonte.zip -DestinationPath app
       - uses: actions/setup-node@v4
-        if: hashFiles('app/package.json') != ''
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - uses: actions/setup-go@v5
-        if: hashFiles('app/installer/go.mod') != ''
-        with:
-          go-version: '1.27.4'
-          cache: false
-      - name: Validate and build embedded PWA
-        if: hashFiles('app/package.json') != ''
-        working-directory: app
-        run: |
-          npm ci
-          npm test
-          npm run build
-          rm -rf installer/web
-          mkdir -p installer/web
-          cp -R dist/. installer/web/
-          go -C installer test ./...
-          cd dist
-          zip -r ../../gestao-orcamentos-pwa.zip .
-      - name: Compile offline Windows installer
-        if: hashFiles('app/installer/go.mod') != ''
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm test
+      - run: npm run dist:win
         env:
-          GOOS: windows
-          GOARCH: amd64
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Verify packaged application starts offline twice
+        shell: pwsh
         run: |
-          go -C app/installer build -trimpath -ldflags='-H windowsgui -s -w' -o ../../Gestao-de-Orcamentos-Instalar-Windows-x64.exe .
-          cp app/installer/LEIA-ME.txt .
-          zip Gestao-de-Orcamentos-Windows.zip Gestao-de-Orcamentos-Instalar-Windows-x64.exe LEIA-ME.txt
-          sha256sum Gestao-de-Orcamentos-Instalar-Windows-x64.exe > SHA256SUMS.txt
+          $setup = (Get-ChildItem release/*-Windows-x64.exe | Select-Object -First 1).FullName
+          $installDir = Join-Path $env:LOCALAPPDATA 'GestaoOrcamentos-QA-Instalado'
+          $installer = Start-Process -FilePath $setup -ArgumentList '/S',('/D='+$installDir) -PassThru
+          if (-not $installer.WaitForExit(120000) -or $installer.ExitCode -ne 0) { throw 'Installer failed' }
+          $exe = Join-Path $installDir 'Gestão de Orçamentos.exe'
+          if (-not (Test-Path $exe)) { throw 'Installed executable missing' }
+          $result = Join-Path $env:APPDATA 'GestaoOrcamentos-QA/smoke-ok.json'
+          1..2 | ForEach-Object {
+            Remove-Item $result -ErrorAction SilentlyContinue
+            $process = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -PassThru
+            if (-not $process.WaitForExit(45000)) { Stop-Process -Id $process.Id; throw 'Application startup timeout' }
+            if ($process.ExitCode -ne 0 -or -not (Test-Path $result)) { throw 'Application failed to start offline' }
+            $check = Get-Content $result -Raw | ConvertFrom-Json
+            if (-not $check.storage -or -not $check.ui -or $check.origin -ne 'orcamentos://app') { throw 'Startup assertions failed' }
+            if ($_ -eq 2 -and -not $check.previous) { throw 'Persistence after restart failed' }
+            Get-Content $result
+          }
       - uses: actions/upload-artifact@v4
-        if: hashFiles('app/package.json') != ''
         with:
-          name: gestao-orcamentos-pwa-e-windows
+          name: Gestao-de-Orcamentos-Windows-completo
           path: |
-            gestao-orcamentos-pwa.zip
-            Gestao-de-Orcamentos-Windows.zip
-            Gestao-de-Orcamentos-Instalar-Windows-x64.exe
-            SHA256SUMS.txt
+            app/release/*.exe
+            app/release/*.blockmap
