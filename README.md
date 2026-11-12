@@ -1,66 +1,31 @@
-# Gestão de Orçamentos — aplicação local
+# Gestão de Orçamentos — aplicativo completo
 
-O instalador Windows inclui a PWA completa dentro do executável. Cada computador hospeda sua própria cópia em http://127.0.0.1:47831/, sem internet desde a primeira abertura. Não existe dependência de site externo para abrir ou operar os orçamentos.
+Aplicativo desktop offline, com React, Electron e navegador Chromium incluído. Carrega os arquivos internos no endereço `orcamentos://app/`. Não usa servidor HTTP, porta TCP, Edge, Chrome, Node ou site externo no computador do usuário.
 
-## Instalação e operação
+## Instalar
 
-Baixe Gestao-de-Orcamentos-Windows.zip, extraia e execute o instalador. Requer Windows 10/11 x64 e Edge ou Chrome já instalado. Não exige Node, Go, Python, privilégios de administrador ou servidor externo. Instala em %LOCALAPPDATA%\GestaoOrcamentos e cria atalhos. O servidor escuta apenas no loopback; outros computadores não podem acessar essa porta. O processo GestaoOrcamentos.exe permanece em segundo plano enquanto o Windows está aberto, permitindo reabrir a janela. Para encerrá-lo, use o Gerenciador de Tarefas. A desinstalação preserva os dados do navegador.
+Baixe o instalador `.exe` em **Releases**, execute e abra pelo atalho **Gestão de Orçamentos**. O pacote NSIS inclui o programa inteiro; não é um instalador web. Requer Windows 10/11 x64. A instalação e a primeira abertura funcionam sem internet depois que você tiver baixado o arquivo. O executável não possui assinatura digital de editor; o Windows pode apresentar aviso de reputação.
 
-## Desenvolvimento e compilação
+Os instaladores antigos de 2 MB ou 9 MB foram substituídos. Use a versão 3.0.0 ou superior, que inclui o próprio navegador.
 
-Requisitos de desenvolvimento: Node 22 e Go 1.27.4. O usuário final não precisa deles.
+## Dados locais
 
-```sh
-npm ci
-npm test
-npm run build
-mkdir -p installer/web
-cp -R dist/. installer/web/
-go -C installer test ./...
-GOOS=windows GOARCH=amd64 go -C installer build -trimpath -ldflags='-H windowsgui -s -w' -o ../Gestao-de-Orcamentos-Instalar-Windows-x64.exe .
-```
+- Diretório fixo: `%APPDATA%\GestaoOrcamentos`.
+- Perfil da aplicação: `%APPDATA%\GestaoOrcamentos\perfil`.
+- Banco financeiro: IndexedDB `gestao-orcamentos`, dentro desse perfil. Não é SQLite.
+- Projetos, itens, histórico, comprovantes e preferências não são enviados ao GitHub.
+- Diagnóstico de inicialização: `%APPDATA%\GestaoOrcamentos\inicializacao.log`; registra somente eventos de abertura e falhas técnicas, sem dados financeiros.
+- Exportação e restauração por backup `.gorc`. Dados de versões anteriores em Edge/Chrome devem ser exportados e restaurados; não há migração automática entre perfis.
+- O desinstalador preserva os dados. Faça backups regularmente; não há criptografia do banco em repouso.
 
-O código-fonte completo está no pacote Gestao-de-Orcamentos-Fonte.zip. O workflow valida o pacote, testa, compila a interface, incorpora os arquivos no executável e disponibiliza artefatos. Não publica hospedagem externa.
+## Atualizações e sincronização
 
-## Atualizações
+O botão **Atualizações** consulta releases públicas no GitHub e avisa quando houver versão superior. O usuário abre a página para baixar e instalar; não existe instalação automática nesta versão. Nenhuma consulta é necessária para abrir ou operar offline.
 
-Nesta versão, baixe e execute o novo instalador do GitHub após encerrar o processo local. Faça backup antes. A origem local permanece fixa para preservar o banco do navegador. O botão Atualizações confere o service worker do servidor local; não instala executáveis novos nem consulta o GitHub automaticamente. O instalador não possui assinatura digital. A compilação Windows foi validada, mas precisa de teste final em Windows.
+A sincronização WebRTC é entre instâncias abertas e autorizadas, com convite/resposta e confirmação da chave nos dois computadores. Após fechar/reabrir, é necessário parear novamente. Não há descoberta automática. Algumas redes podem exigir configuração própria de STUN/TURN.
 
-## Armazenamento
+## Desenvolvimento
 
-- Banco: IndexedDB `gestao-orcamentos`, versão de esquema 1.
-- `ops`: histórico imutável com projetos, itens, pagamentos, exclusões e recibos.
-- `meta`: identificador do dispositivo e preferências locais.
-- Valores monetários: inteiros em centavos.
-- Comprovantes: PNG/JPG/WEBP/GIF/PDF, até 5 MB por arquivo, preservados no backup `.gorc`.
-- Cache Storage: apenas arquivos do aplicativo.
-- Os dados não são enviados ao GitHub. As conexões de sincronização só são abertas por ação explícita.
-- O navegador pode negar armazenamento persistente. Limpar os dados do site, apagar o perfil ou mudar a origem pode perder os dados. Faça backups. Não há criptografia em repouso.
+Node 22. Execute `npm ci`, `npm test`, `npm run build` e `npm run desktop`. Compile no Windows com `npm run dist:win`. O workflow no GitHub testa e gera o instalador completo em um runner Windows, com permissão somente de leitura. Os arquivos do aplicativo são empacotados no `app.asar` junto com Electron/Chromium; não há busca de arquivos do aplicativo na internet durante a abertura.
 
-## Sincronização distribuída
-
-Cada instância guarda seu próprio histórico. Não há banco central. As alterações são identificadas por UUID e têm relações causais explícitas; a entrega repetida de um evento não duplica pagamentos. Alterações concorrentes no mesmo registro viram um conflito, que exige escolha manual. Pagamentos com versões concorrentes ficam fora dos totais até serem resolvidos. Dois pagamentos distintos podem, por concorrência, ultrapassar o orçamento: ambos são preservados e a interface alerta para revisão.
-
-### Pareamento sem servidor de sinalização
-
-1. Abra **Sincronização** nos computadores A e B.
-2. A cria convite e envia o código para B por um canal de confiança.
-3. B cola e aceita o convite, gerando a resposta.
-4. A cola a resposta e seleciona **Aplicar resposta**.
-5. Compare a chave curta nas duas telas e confirme em ambas.
-
-Os códigos contêm informação de rede e um segredo temporário. Não os publique. Somente depois das duas confirmações os históricos financeiros são enviados. O canal WebRTC usa DTLS; as mensagens da aplicação também usam AES-256-GCM. As transferências são divididas em blocos e limitadas a 45 MB de conteúdo por envio.
-
-A sincronização acontece enquanto as instâncias estão abertas, autorizadas e conectadas. Os eventos permanecem no banco quando offline. Ao fechar/reabrir uma instância, é preciso refazer o pareamento; não há descoberta automática nem reconexão sem sinalização. Uma malha de conexões autorizadas retransmite as alterações entre os pares sem duplicá-las.
-
-Na mesma rede, a conexão direta normalmente é possível; firewalls, isolamento Wi-Fi e políticas do navegador podem bloqueá-la. Pela internet, configure seu próprio servidor STUN/TURN nas opções avançadas. Nenhum servidor público é usado por padrão. Um TURN pode retransmitir os pacotes criptografados. Credenciais TURN permanecem nos metadados locais. A disponibilidade de uma conexão direta não é garantida.
-
-## Backup e importação
-
-A restauração completa cria eventos de exclusão/atualização e pode se propagar aos pares conectados. O histórico anterior continua preservado. A opção mesclar mantém os históricos recebidos e mostra conflitos. Backups com conflitos não podem ser restaurados como substituição até serem revisados.
-
-Importação de XLSX/CSV possui mapeamento de colunas e revisão antes de gravar. Pagamento inicial exige valor, data e método; valores excedentes são omitidos e avisados para registro posterior com confirmação. Exportação XLSX contém os itens filtrados e uma aba de pagamentos. O PDF exporta o relatório filtrado.
-
-## Escopo e validação
-
-Esta entrega é uma versão inicial operacional. Testes automatizados cobrem centavos, pagamentos parciais, persistência, duplicação de eventos, conflitos, exclusões, comprovantes e regras de importação. WebRTC entre redes diferentes depende da infraestrutura escolhida e deve ser validado nas redes de destino. Não foi implementada descoberta automática em segundo plano, hospedagem de TURN, notificação local de vencimentos nem os módulos avançados de propostas e comparação de fornecedores da fase 3.
+A interface usa isolamento de contexto, sandbox, integração Node desativada, protocolo com validação de origem/caminho, bloqueio de navegação externa e IPC limitado. A consulta de versões só acessa o repositório público correspondente.
